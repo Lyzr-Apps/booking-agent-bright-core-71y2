@@ -1,154 +1,57 @@
 'use client'
 
-import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { callAIAgent, AIAgentResponse } from '@/lib/aiAgent'
-import { copyToClipboard } from '@/lib/clipboard'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { cn } from '@/lib/utils'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { MdHotel, MdRestaurant, MdSpa, MdMeetingRoom, MdRoomService, MdSend, MdContentCopy, MdHistory, MdClose, MdMenu } from 'react-icons/md'
-import { HiChatBubbleLeftRight } from 'react-icons/hi2'
-import { BsThreeDots } from 'react-icons/bs'
-
-// ============================================================
-// TYPES
-// ============================================================
-
-interface BookingDetails {
-  reference_id: string
-  booking_type: string
-  status: string
-  details: string
-}
-
-interface ChatMessage {
-  id: string
-  role: 'user' | 'agent'
-  content: string
-  timestamp: Date
-  bookingDetails?: BookingDetails | null
-}
+import { MdMic, MdMicOff, MdHotel, MdCallEnd } from 'react-icons/md'
+import { HiPhone } from 'react-icons/hi2'
+import { BsSoundwave } from 'react-icons/bs'
 
 // ============================================================
 // CONSTANTS
 // ============================================================
 
-const MANAGER_AGENT_ID = '699958767929f75fa2684e49'
+const AGENT_ID = '699958767929f75fa2684e49'
+const VOICE_API = 'https://voice-sip.studio.lyzr.ai/session/start'
 
-const INITIAL_SUGGESTIONS = [
-  { label: 'Book a Room', icon: MdHotel, message: 'I would like to book a hotel room.' },
-  { label: 'Reserve Dining', icon: MdRestaurant, message: 'I would like to make a dining reservation.' },
-  { label: 'Spa Appointment', icon: MdSpa, message: 'I would like to schedule a spa appointment.' },
-  { label: 'Conference Room', icon: MdMeetingRoom, message: 'I need to book a conference room.' },
-  { label: 'Concierge Services', icon: MdRoomService, message: 'I need concierge assistance.' },
-]
-
-const POST_BOOKING_SUGGESTIONS = [
-  { label: 'Modify Booking', message: 'I would like to modify my booking.' },
-  { label: 'Cancel Booking', message: 'I would like to cancel my booking.' },
-  { label: 'New Booking', message: 'I would like to make a new booking.' },
-]
+type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
 
 // ============================================================
-// RESPONSE PARSER
+// ERROR BOUNDARY
 // ============================================================
 
-function parseAgentResponse(result: AIAgentResponse): { text: string; bookingDetails: BookingDetails | null } {
-  let text = ''
-  let bookingDetails: BookingDetails | null = null
-
-  if (!result.success) {
-    return { text: result.error || 'Something went wrong. Please try again.', bookingDetails: null }
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false, error: '' }
   }
-
-  const resp = result.response
-
-  // 1. Check if result.response.result has a "response" field (from JSON schema)
-  if (resp?.result?.response) {
-    text = typeof resp.result.response === 'string' ? resp.result.response : JSON.stringify(resp.result.response)
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message }
   }
-  // 2. Check result.response.message
-  else if (resp?.message) {
-    text = resp.message
-  }
-  // 3. Check result.response.result as various field names
-  else if (resp?.result?.text) {
-    text = resp.result.text
-  }
-  else if (resp?.result?.message) {
-    text = resp.result.message
-  }
-  else if (resp?.result?.answer) {
-    text = resp.result.answer
-  }
-  else if (typeof resp?.result === 'string') {
-    try {
-      const parsed = JSON.parse(resp.result)
-      text = parsed.response || parsed.message || parsed.text || resp.result
-      if (parsed.booking_details) {
-        bookingDetails = parsed.booking_details
-      }
-    } catch {
-      text = resp.result
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+          <div className="text-center p-8 max-w-md">
+            <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
+            <p className="text-muted-foreground mb-4 text-sm">{this.state.error}</p>
+            <button
+              onClick={() => this.setState({ hasError: false, error: '' })}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm"
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      )
     }
+    return this.props.children
   }
-  else if (typeof resp === 'string') {
-    try {
-      const parsed = JSON.parse(resp as unknown as string)
-      text = parsed.response || parsed.message || parsed.text || (resp as unknown as string)
-    } catch {
-      text = resp as unknown as string
-    }
-  }
-
-  // Try to extract booking_details from result
-  if (!bookingDetails && resp?.result?.booking_details) {
-    const bd = resp.result.booking_details
-    if (bd && bd.reference_id && bd.reference_id !== '' && bd.reference_id !== 'N/A' && bd.reference_id !== 'null') {
-      bookingDetails = {
-        reference_id: bd.reference_id,
-        booking_type: bd.booking_type || '',
-        status: bd.status || 'Confirmed',
-        details: bd.details || '',
-      }
-    }
-  }
-
-  // Also try parsing text itself for JSON (agent might embed JSON in response)
-  if (!bookingDetails && text) {
-    try {
-      const maybeJson = JSON.parse(text)
-      if (maybeJson.booking_details && maybeJson.booking_details.reference_id) {
-        bookingDetails = maybeJson.booking_details
-        text = maybeJson.response || maybeJson.message || text
-      }
-    } catch {
-      // Not JSON, that is fine
-    }
-  }
-
-  // Also check raw_response as last resort
-  if (!text && result.raw_response) {
-    try {
-      const rawParsed = JSON.parse(result.raw_response)
-      text = rawParsed.response || rawParsed.message || rawParsed.text || result.raw_response
-      if (rawParsed.booking_details) {
-        bookingDetails = rawParsed.booking_details
-      }
-    } catch {
-      text = result.raw_response
-    }
-  }
-
-  if (!text) {
-    text = 'I received your message but could not parse the response. Please try again.'
-  }
-
-  return { text, bookingDetails }
 }
 
 // ============================================================
@@ -190,469 +93,738 @@ function renderMarkdown(text: string) {
 }
 
 // ============================================================
-// HELPER: BOOKING TYPE ICON
+// VOICE VISUALIZATION RINGS
 // ============================================================
 
-function getBookingIcon(bookingType: string) {
-  const lower = (bookingType || '').toLowerCase()
-  if (lower.includes('room') || lower.includes('hotel') || lower.includes('suite') || lower.includes('accommodation')) return MdHotel
-  if (lower.includes('din') || lower.includes('restaurant') || lower.includes('meal') || lower.includes('food')) return MdRestaurant
-  if (lower.includes('spa') || lower.includes('massage') || lower.includes('wellness')) return MdSpa
-  if (lower.includes('conference') || lower.includes('meeting') || lower.includes('event')) return MdMeetingRoom
-  return MdRoomService
-}
+function VoiceRings({ audioLevel, isActive, isSpeaking }: { audioLevel: number; isActive: boolean; isSpeaking: boolean }) {
+  const ringCount = 4
+  const rings = Array.from({ length: ringCount }, (_, i) => i)
 
-function getStatusColor(status: string) {
-  const lower = (status || '').toLowerCase()
-  if (lower.includes('confirm')) return 'bg-green-500'
-  if (lower.includes('modif') || lower.includes('pending')) return 'bg-amber-500'
-  if (lower.includes('cancel')) return 'bg-red-500'
-  return 'bg-green-500'
-}
-
-function getStatusBadgeVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  const lower = (status || '').toLowerCase()
-  if (lower.includes('cancel')) return 'destructive'
-  if (lower.includes('modif') || lower.includes('pending')) return 'secondary'
-  return 'default'
-}
-
-// ============================================================
-// TIMESTAMP FORMATTER
-// ============================================================
-
-function formatTime(date: Date) {
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-// ============================================================
-// ERROR BOUNDARY
-// ============================================================
-
-class ErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean; error: string }
-> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props)
-    this.state = { hasError: false, error: '' }
-  }
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error: error.message }
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-          <div className="text-center p-8 max-w-md">
-            <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
-            <p className="text-muted-foreground mb-4 text-sm">{this.state.error}</p>
-            <button onClick={() => this.setState({ hasError: false, error: '' })} className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm">
-              Try again
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
-
-// ============================================================
-// SUB-COMPONENTS (defined as functions, no export)
-// ============================================================
-
-function TypingIndicator() {
   return (
-    <div className="flex items-start gap-3 px-4 py-2">
-      <Avatar className="h-8 w-8 flex-shrink-0 border border-border">
-        <AvatarFallback className="bg-primary text-primary-foreground text-xs font-serif">HC</AvatarFallback>
-      </Avatar>
-      <div className="bg-card text-card-foreground rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm border border-border/40">
-        <div className="flex items-center gap-1.5">
-          <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '0ms' }} />
-          <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '150ms' }} />
-          <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '300ms' }} />
-        </div>
+    <>
+      {rings.map((i) => {
+        const baseScale = 1 + (i + 1) * 0.18
+        const levelBoost = isActive ? audioLevel * (0.12 + i * 0.06) : 0
+        const scale = baseScale + levelBoost
+        const baseOpacity = isActive ? 0.25 - i * 0.05 : 0.08
+        const levelOpacity = isActive ? audioLevel * (0.2 - i * 0.04) : 0
+
+        return (
+          <div
+            key={i}
+            className={cn(
+              'absolute inset-0 rounded-full transition-all',
+              isSpeaking ? 'border-accent/40' : 'border-primary/40',
+              isActive ? 'duration-150' : 'duration-700'
+            )}
+            style={{
+              transform: `scale(${scale})`,
+              opacity: baseOpacity + levelOpacity,
+              borderWidth: '2px',
+              borderStyle: 'solid',
+              borderColor: isSpeaking
+                ? 'hsl(43 75% 38% / 0.4)'
+                : 'hsl(27 61% 26% / 0.35)',
+            }}
+          />
+        )
+      })}
+    </>
+  )
+}
+
+// ============================================================
+// TRANSCRIPT BUBBLE
+// ============================================================
+
+function TranscriptBubble({ role, text }: { role: 'user' | 'agent'; text: string }) {
+  const isUser = role === 'user'
+  return (
+    <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
+      <div
+        className={cn(
+          'max-w-[85%] px-4 py-2.5 rounded-2xl shadow-sm',
+          isUser
+            ? 'bg-primary text-primary-foreground rounded-br-sm'
+            : 'bg-card text-card-foreground rounded-bl-sm border border-border/30'
+        )}
+      >
+        {isUser ? (
+          <p className="text-sm leading-relaxed">{text}</p>
+        ) : (
+          renderMarkdown(text)
+        )}
       </div>
     </div>
   )
 }
 
-function BookingCard({ booking, onCopy }: { booking: BookingDetails; onCopy: (text: string) => void }) {
-  const IconComp = getBookingIcon(booking.booking_type)
-  const badgeVariant = getStatusBadgeVariant(booking.status)
+// ============================================================
+// STATUS BADGE
+// ============================================================
+
+function ConnectionStatusBadge({ status }: { status: ConnectionStatus }) {
+  const config: Record<ConnectionStatus, { label: string; dotClass: string; badgeClass: string }> = {
+    idle: { label: 'Ready', dotClass: 'bg-muted-foreground/50', badgeClass: 'bg-secondary/60 text-muted-foreground border-border/30' },
+    connecting: { label: 'Connecting', dotClass: 'bg-amber-500 animate-pulse', badgeClass: 'bg-amber-500/10 text-amber-700 border-amber-500/30' },
+    connected: { label: 'Connected', dotClass: 'bg-green-500', badgeClass: 'bg-green-500/10 text-green-700 border-green-500/30' },
+    error: { label: 'Error', dotClass: 'bg-red-500', badgeClass: 'bg-red-500/10 text-red-700 border-red-500/30' },
+  }
+  const c = config[status]
 
   return (
-    <Card className="my-2 shadow-md border-border/60 bg-card/80 max-w-md">
-      <CardHeader className="pb-2 pt-4 px-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <IconComp className="h-4 w-4 text-primary" />
-            </div>
-            <CardTitle className="text-sm font-serif tracking-wide">Booking Confirmation</CardTitle>
-          </div>
-          <Badge variant={badgeVariant} className="text-xs">{booking.status || 'Confirmed'}</Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="px-4 pb-4">
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mt-1">
-          <div>
-            <p className="text-muted-foreground text-xs">Reference ID</p>
-            <div className="flex items-center gap-1">
-              <p className="font-medium text-foreground truncate">{booking.reference_id}</p>
-              <button onClick={() => onCopy(booking.reference_id)} className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" aria-label="Copy reference ID">
-                <MdContentCopy className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-          <div>
-            <p className="text-muted-foreground text-xs">Booking Type</p>
-            <p className="font-medium text-foreground">{booking.booking_type || '--'}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground text-xs">Status</p>
-            <p className="font-medium text-foreground">{booking.status || 'Confirmed'}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground text-xs">Details</p>
-            <p className="font-medium text-foreground text-xs leading-snug">{booking.details || '--'}</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function SidebarBookingItem({ booking }: { booking: BookingDetails }) {
-  const IconComp = getBookingIcon(booking.booking_type)
-  const dotColor = getStatusColor(booking.status)
-
-  return (
-    <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary/60 transition-colors cursor-default">
-      <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-        <IconComp className="h-4 w-4 text-primary" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground truncate">{booking.booking_type || 'Booking'}</p>
-        <p className="text-xs text-muted-foreground truncate">{booking.reference_id}</p>
-      </div>
-      <span className={cn('h-2.5 w-2.5 rounded-full flex-shrink-0', dotColor)} />
+    <div className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium', c.badgeClass)}>
+      <span className={cn('h-2 w-2 rounded-full flex-shrink-0', c.dotClass)} />
+      {c.label}
     </div>
   )
 }
+
+// ============================================================
+// SUGGESTION CHIPS
+// ============================================================
+
+const SUGGESTIONS = [
+  'Book a room',
+  'Reserve dining',
+  'Spa appointment',
+  'Conference room',
+  'Concierge services',
+]
 
 // ============================================================
 // MAIN PAGE COMPONENT
 // ============================================================
 
 export default function Page() {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [bookings, setBookings] = useState<BookingDetails[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [inputValue, setInputValue] = useState('')
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeAgentId, setActiveAgentId] = useState<string | null>(null)
-  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [status, setStatus] = useState<ConnectionStatus>('idle')
+  const [isListening, setIsListening] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  const [transcript, setTranscript] = useState<Array<{ role: 'user' | 'agent'; text: string }>>([])
+  const [currentThinking, setCurrentThinking] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [audioLevel, setAudioLevel] = useState(0)
+  const [callDuration, setCallDuration] = useState(0)
 
-  const sessionIdRef = useRef<string>('')
-  const userIdRef = useRef<string>('')
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const wsRef = useRef<WebSocket | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const sampleRateRef = useRef<number>(24000)
+  const isMutedRef = useRef(false)
 
-  // Generate session ID on mount
+  // Audio playback queue
+  const nextPlayTimeRef = useRef<number>(0)
+  const playbackContextRef = useRef<AudioContext | null>(null)
+
+  // Analyser for visualizer
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const animFrameRef = useRef<number>(0)
+
+  // Call timer
+  const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const callStartRef = useRef<number>(0)
+
+  // Transcript scroll
+  const transcriptEndRef = useRef<HTMLDivElement>(null)
+
+  // Keep mute ref in sync
   useEffect(() => {
-    try {
-      sessionIdRef.current = crypto.randomUUID()
-    } catch {
-      sessionIdRef.current = Date.now().toString(36) + Math.random().toString(36).slice(2)
+    isMutedRef.current = isMuted
+  }, [isMuted])
+
+  // Auto-scroll transcript
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [transcript, currentThinking])
+
+  // Convert Float32 to PCM16 base64
+  const float32ToPcm16Base64 = useCallback((float32Array: Float32Array): string => {
+    const pcm16 = new Int16Array(float32Array.length)
+    for (let i = 0; i < float32Array.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32Array[i]))
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff
     }
-    userIdRef.current = 'guest_' + Date.now().toString(36)
+    const bytes = new Uint8Array(pcm16.buffer)
+    let binary = ''
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i])
+    }
+    return btoa(binary)
   }, [])
 
-  // Auto-scroll to bottom when messages change
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
+  // Resample audio to target sample rate
+  const resample = useCallback(async (
+    audioData: Float32Array,
+    fromSampleRate: number,
+    toSampleRate: number
+  ): Promise<Float32Array> => {
+    if (fromSampleRate === toSampleRate) return audioData
+    const offlineCtx = new OfflineAudioContext(
+      1,
+      Math.ceil((audioData.length * toSampleRate) / fromSampleRate),
+      toSampleRate
+    )
+    const buffer = offlineCtx.createBuffer(1, audioData.length, fromSampleRate)
+    buffer.getChannelData(0).set(audioData)
+    const source = offlineCtx.createBufferSource()
+    source.buffer = buffer
+    source.connect(offlineCtx.destination)
+    source.start()
+    const rendered = await offlineCtx.startRendering()
+    return rendered.getChannelData(0)
+  }, [])
 
-  const handleCopy = useCallback(async (text: string) => {
-    const success = await copyToClipboard(text)
-    if (success) {
-      setCopiedId(text)
-      setTimeout(() => setCopiedId(null), 2000)
+  // Play received audio chunk -- QUEUED sequentially
+  const playAudioChunk = useCallback((base64Audio: string) => {
+    try {
+      if (!playbackContextRef.current || playbackContextRef.current.state === 'closed') {
+        playbackContextRef.current = new AudioContext({ sampleRate: sampleRateRef.current })
+      }
+      const ctx = playbackContextRef.current
+
+      const binaryStr = atob(base64Audio)
+      const bytes = new Uint8Array(binaryStr.length)
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i)
+      }
+      const pcm16 = new Int16Array(bytes.buffer)
+      const float32 = new Float32Array(pcm16.length)
+      for (let i = 0; i < pcm16.length; i++) {
+        float32[i] = pcm16[i] / 0x8000
+      }
+
+      const audioBuffer = ctx.createBuffer(1, float32.length, sampleRateRef.current)
+      audioBuffer.getChannelData(0).set(float32)
+
+      const sourceNode = ctx.createBufferSource()
+      sourceNode.buffer = audioBuffer
+      sourceNode.connect(ctx.destination)
+
+      const now = ctx.currentTime
+      const startTime = Math.max(now, nextPlayTimeRef.current)
+      sourceNode.start(startTime)
+      nextPlayTimeRef.current = startTime + audioBuffer.duration
+
+      setIsSpeaking(true)
+      sourceNode.onended = () => {
+        if (ctx.currentTime >= nextPlayTimeRef.current - 0.05) {
+          setIsSpeaking(false)
+        }
+      }
+    } catch (err) {
+      console.error('Audio playback error:', err)
     }
   }, [])
 
-  const sendMessage = useCallback(async (messageText: string) => {
-    if (!messageText.trim() || isLoading) return
-
-    const userMsg: ChatMessage = {
-      id: Date.now().toString() + '_user',
-      role: 'user',
-      content: messageText.trim(),
-      timestamp: new Date(),
+  // Cleanup function
+  const cleanup = useCallback(() => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current)
+      animFrameRef.current = 0
     }
+    if (processorRef.current) {
+      processorRef.current.disconnect()
+      processorRef.current = null
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close()
+      audioContextRef.current = null
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+    }
+    analyserRef.current = null
+    if (callTimerRef.current) {
+      clearInterval(callTimerRef.current)
+      callTimerRef.current = null
+    }
+  }, [])
 
-    setMessages(prev => [...prev, userMsg])
-    setInputValue('')
-    setIsLoading(true)
-    setActiveAgentId(MANAGER_AGENT_ID)
+  // Start voice session
+  const startSession = useCallback(async () => {
+    setStatus('connecting')
+    setError(null)
+    setTranscript([])
+    setCurrentThinking('')
+    setCallDuration(0)
+    setIsMuted(false)
+    isMutedRef.current = false
 
     try {
-      const result = await callAIAgent(messageText.trim(), MANAGER_AGENT_ID, {
-        user_id: userIdRef.current,
-        session_id: sessionIdRef.current,
+      // 1. Start session via REST API
+      const res = await fetch(VOICE_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: AGENT_ID }),
       })
 
-      const { text, bookingDetails } = parseAgentResponse(result)
-
-      const agentMsg: ChatMessage = {
-        id: Date.now().toString() + '_agent',
-        role: 'agent',
-        content: text,
-        timestamp: new Date(),
-        bookingDetails: bookingDetails,
+      if (!res.ok) {
+        throw new Error(`Session start failed: ${res.status}`)
       }
 
-      setMessages(prev => [...prev, agentMsg])
+      const data = await res.json()
+      const wsUrl = data.wsUrl
+      sampleRateRef.current = data.audioConfig?.sampleRate || 24000
 
-      if (bookingDetails) {
-        setBookings(prev => [...prev, bookingDetails])
+      if (!wsUrl) throw new Error('No wsUrl in response')
+
+      // 2. Create playback context
+      if (playbackContextRef.current && playbackContextRef.current.state !== 'closed') {
+        playbackContextRef.current.close()
       }
-    } catch {
-      const errMsg: ChatMessage = {
-        id: Date.now().toString() + '_err',
-        role: 'agent',
-        content: 'An unexpected error occurred. Please try again.',
-        timestamp: new Date(),
+      playbackContextRef.current = new AudioContext({ sampleRate: sampleRateRef.current })
+      nextPlayTimeRef.current = 0
+
+      // 3. Connect WebSocket
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
+
+      ws.onopen = async () => {
+        setStatus('connected')
+
+        // Start call timer
+        callStartRef.current = Date.now()
+        callTimerRef.current = setInterval(() => {
+          setCallDuration(Math.floor((Date.now() - callStartRef.current) / 1000))
+        }, 1000)
+
+        // 4. Request mic access and start streaming
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              sampleRate: { ideal: sampleRateRef.current },
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          })
+          streamRef.current = stream
+
+          const audioContext = new AudioContext({ sampleRate: sampleRateRef.current })
+          audioContextRef.current = audioContext
+
+          const source = audioContext.createMediaStreamSource(stream)
+
+          // Analyser for visualization
+          const analyser = audioContext.createAnalyser()
+          analyser.fftSize = 256
+          source.connect(analyser)
+          analyserRef.current = analyser
+
+          // ScriptProcessor -- connect to silent gain node, NOT destination
+          const processor = audioContext.createScriptProcessor(4096, 1, 1)
+          processorRef.current = processor
+
+          const silentGain = audioContext.createGain()
+          silentGain.gain.value = 0
+          silentGain.connect(audioContext.destination)
+
+          source.connect(processor)
+          processor.connect(silentGain) // silent -- no echo
+
+          processor.onaudioprocess = async (e) => {
+            if (ws.readyState !== WebSocket.OPEN) return
+            if (isMutedRef.current) return
+            const inputData = e.inputBuffer.getChannelData(0)
+            const resampled = await resample(
+              new Float32Array(inputData),
+              audioContext.sampleRate,
+              sampleRateRef.current
+            )
+            const base64 = float32ToPcm16Base64(resampled)
+            ws.send(JSON.stringify({
+              type: 'audio',
+              audio: base64,
+              sampleRate: sampleRateRef.current,
+            }))
+          }
+
+          setIsListening(true)
+
+          // Audio level animation
+          const updateLevel = () => {
+            if (!analyserRef.current) return
+            const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount)
+            analyserRef.current.getByteFrequencyData(dataArray)
+            const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
+            setAudioLevel(isMutedRef.current ? 0 : avg / 255)
+            animFrameRef.current = requestAnimationFrame(updateLevel)
+          }
+          updateLevel()
+        } catch {
+          setError('Microphone access denied. Please allow microphone access to use voice.')
+          setStatus('error')
+        }
       }
-      setMessages(prev => [...prev, errMsg])
-    } finally {
-      setIsLoading(false)
-      setActiveAgentId(null)
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+
+          switch (msg.type) {
+            case 'audio':
+              if (msg.audio) {
+                playAudioChunk(msg.audio)
+              }
+              break
+
+            case 'transcript':
+              if (msg.role === 'user' && msg.text) {
+                setTranscript(prev => {
+                  const last = prev[prev.length - 1]
+                  if (last && last.role === 'user') {
+                    return [...prev.slice(0, -1), { role: 'user' as const, text: msg.text }]
+                  }
+                  return [...prev, { role: 'user' as const, text: msg.text }]
+                })
+              } else if (msg.role === 'agent' && msg.text) {
+                setTranscript(prev => {
+                  const last = prev[prev.length - 1]
+                  if (last && last.role === 'agent') {
+                    return [...prev.slice(0, -1), { role: 'agent' as const, text: msg.text }]
+                  }
+                  return [...prev, { role: 'agent' as const, text: msg.text }]
+                })
+              }
+              break
+
+            case 'thinking':
+              setCurrentThinking(msg.text || 'Processing...')
+              break
+
+            case 'clear':
+              nextPlayTimeRef.current = 0
+              setIsSpeaking(false)
+              setCurrentThinking('')
+              break
+
+            case 'error':
+              setError(msg.message || 'Voice agent error')
+              break
+
+            default:
+              break
+          }
+        } catch {
+          // Non-JSON message, ignore
+        }
+      }
+
+      ws.onerror = () => {
+        setError('WebSocket connection error')
+        setStatus('error')
+      }
+
+      ws.onclose = () => {
+        setStatus('idle')
+        setIsListening(false)
+        setIsSpeaking(false)
+        cleanup()
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start session')
+      setStatus('error')
     }
-  }, [isLoading])
+  }, [float32ToPcm16Base64, resample, playAudioChunk, cleanup])
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage(inputValue)
+  // End session
+  const endSession = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
     }
-  }, [inputValue, sendMessage])
+    cleanup()
+    setStatus('idle')
+    setIsListening(false)
+    setIsSpeaking(false)
+    setCurrentThinking('')
+    setAudioLevel(0)
+  }, [cleanup])
 
-  const hasBookings = bookings.length > 0
-  const hasMessages = messages.length > 0
-  const suggestionsToShow = hasBookings ? POST_BOOKING_SUGGESTIONS : INITIAL_SUGGESTIONS
+  // Toggle mute
+  const toggleMute = useCallback(() => {
+    setIsMuted(prev => !prev)
+  }, [])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
+      cleanup()
+      if (playbackContextRef.current && playbackContextRef.current.state !== 'closed') {
+        playbackContextRef.current.close()
+      }
+    }
+  }, [cleanup])
+
+  // Format call duration
+  const formatDuration = (seconds: number): string => {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+  }
+
+  const isConnected = status === 'connected'
+  const isIdle = status === 'idle'
+  const isConnecting = status === 'connecting'
+  const hasTranscript = transcript.length > 0
 
   return (
     <ErrorBoundary>
       <div className="min-h-screen h-screen flex flex-col bg-background text-foreground overflow-hidden">
+
         {/* ============ HEADER ============ */}
-        <header className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-border/30 bg-card/60 backdrop-blur-sm flex-shrink-0 z-20">
+        <header className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-border/20 bg-card/50 backdrop-blur-sm flex-shrink-0 z-20">
           <div className="flex items-center gap-3">
-            {/* Mobile menu toggle */}
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-1.5 rounded-lg hover:bg-secondary transition-colors" aria-label="Toggle sidebar">
-              {sidebarOpen ? <MdClose className="h-5 w-5 text-foreground" /> : <MdMenu className="h-5 w-5 text-foreground" />}
-            </button>
-            <div className="flex items-center gap-2.5">
-              <div className="h-9 w-9 rounded-lg bg-primary flex items-center justify-center shadow-sm">
-                <MdHotel className="h-5 w-5 text-primary-foreground" />
-              </div>
-              <div>
-                <h1 className="text-base font-serif font-semibold tracking-wide text-foreground leading-tight">HotelConcierge AI</h1>
-                <p className="text-xs text-muted-foreground leading-tight">Your personal booking assistant</p>
-              </div>
+            <div className="h-9 w-9 rounded-lg bg-primary flex items-center justify-center shadow-sm">
+              <MdHotel className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <div>
+              <h1 className="text-base font-serif font-semibold tracking-wide text-foreground leading-tight">HotelConcierge AI</h1>
+              <p className="text-xs text-muted-foreground leading-tight">Voice-powered concierge</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/60 border border-border/30">
-              <span className={cn('h-2 w-2 rounded-full', activeAgentId ? 'bg-amber-500 animate-pulse' : 'bg-green-500')} />
-              <span className="text-xs text-muted-foreground font-medium">{activeAgentId ? 'Processing' : 'Online'}</span>
-            </div>
-          </div>
+          <ConnectionStatusBadge status={status} />
         </header>
 
-        {/* ============ MAIN LAYOUT ============ */}
-        <div className="flex flex-1 min-h-0 relative">
-          {/* ============ SIDEBAR (Booking History) ============ */}
-          {/* Mobile overlay */}
-          {sidebarOpen && (
-            <div className="fixed inset-0 bg-black/30 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />
-          )}
-          <aside className={cn(
-            'flex-shrink-0 w-72 border-r border-border/30 bg-card/40 flex flex-col z-40 transition-transform duration-200',
-            'fixed md:relative inset-y-0 left-0 md:translate-x-0',
-            sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
-            'top-0 md:top-auto pt-14 md:pt-0'
-          )}>
-            <div className="px-4 py-4 border-b border-border/20">
-              <div className="flex items-center gap-2">
-                <MdHistory className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-sm font-serif font-semibold tracking-wide text-foreground">Booking History</h2>
+        {/* ============ MAIN CONTENT ============ */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+
+          {/* ============ VOICE INTERFACE AREA ============ */}
+          <div className="flex flex-col items-center justify-center px-4 pt-6 pb-4 md:pt-10 md:pb-6 flex-shrink-0">
+
+            {/* Central Voice Button */}
+            <div className="relative flex items-center justify-center">
+              {/* Animated rings */}
+              <div className="absolute h-32 w-32 md:h-40 md:w-40">
+                <VoiceRings
+                  audioLevel={audioLevel}
+                  isActive={isConnected && isListening}
+                  isSpeaking={isSpeaking}
+                />
               </div>
+
+              {/* Outer glow when connected */}
+              {isConnected && (
+                <div
+                  className="absolute rounded-full transition-all duration-500"
+                  style={{
+                    width: '180px',
+                    height: '180px',
+                    background: isSpeaking
+                      ? 'radial-gradient(circle, hsl(43 75% 38% / 0.08) 0%, transparent 70%)'
+                      : 'radial-gradient(circle, hsl(27 61% 26% / 0.08) 0%, transparent 70%)',
+                  }}
+                />
+              )}
+
+              {/* Main mic button */}
+              <button
+                onClick={isIdle || status === 'error' ? startSession : isConnected ? endSession : undefined}
+                disabled={isConnecting}
+                className={cn(
+                  'relative z-10 h-24 w-24 md:h-32 md:w-32 rounded-full flex items-center justify-center transition-all duration-300 shadow-lg',
+                  isIdle && 'bg-primary hover:bg-primary/90 hover:shadow-xl hover:scale-105 cursor-pointer',
+                  isConnecting && 'bg-primary/70 cursor-wait animate-pulse',
+                  isConnected && !isSpeaking && 'bg-primary shadow-xl cursor-pointer',
+                  isConnected && isSpeaking && 'bg-accent shadow-xl shadow-accent/20 cursor-pointer',
+                  status === 'error' && 'bg-destructive/80 hover:bg-destructive cursor-pointer',
+                )}
+                aria-label={isIdle ? 'Start voice call' : isConnected ? 'End voice call' : 'Connecting'}
+              >
+                {isIdle && (
+                  <HiPhone className="h-10 w-10 md:h-12 md:w-12 text-primary-foreground" />
+                )}
+                {isConnecting && (
+                  <div className="flex items-center gap-1">
+                    <span className="inline-block h-2 w-2 rounded-full bg-primary-foreground/80 animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="inline-block h-2 w-2 rounded-full bg-primary-foreground/80 animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="inline-block h-2 w-2 rounded-full bg-primary-foreground/80 animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                )}
+                {isConnected && !isSpeaking && (
+                  <BsSoundwave className="h-10 w-10 md:h-12 md:w-12 text-primary-foreground" />
+                )}
+                {isConnected && isSpeaking && (
+                  <BsSoundwave className="h-10 w-10 md:h-12 md:w-12 text-accent-foreground animate-pulse" />
+                )}
+                {status === 'error' && (
+                  <HiPhone className="h-10 w-10 md:h-12 md:w-12 text-destructive-foreground" />
+                )}
+              </button>
             </div>
-            <ScrollArea className="flex-1 px-2 py-2">
-              {hasBookings ? (
-                <div className="space-y-1">
-                  {bookings.map((booking, idx) => (
-                    <SidebarBookingItem key={booking.reference_id + '_' + idx} booking={booking} />
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-                  <MdHistory className="h-10 w-10 text-muted-foreground/30 mb-3" />
-                  <p className="text-sm text-muted-foreground">No bookings yet</p>
-                  <p className="text-xs text-muted-foreground/60 mt-1">Your booking confirmations will appear here</p>
+
+            {/* Status text below button */}
+            <div className="mt-5 text-center min-h-[3rem]">
+              {isIdle && (
+                <div>
+                  <p className="text-base font-serif font-medium text-foreground">Tap to Connect</p>
+                  <p className="text-xs text-muted-foreground mt-1">Speak with your personal hotel concierge</p>
                 </div>
               )}
-            </ScrollArea>
-            {/* Agent info at bottom of sidebar */}
-            <div className="px-3 py-3 border-t border-border/20">
-              <div className="flex items-center gap-2 px-2 py-2 rounded-lg bg-secondary/40">
-                <div className="flex items-center gap-1.5">
-                  <span className={cn('h-2 w-2 rounded-full', activeAgentId === MANAGER_AGENT_ID ? 'bg-amber-500 animate-pulse' : 'bg-green-500')} />
-                  <span className="text-xs text-muted-foreground font-medium">Booking Coordinator</span>
+              {isConnecting && (
+                <div>
+                  <p className="text-base font-serif font-medium text-foreground">Connecting...</p>
+                  <p className="text-xs text-muted-foreground mt-1">Setting up your concierge line</p>
                 </div>
-              </div>
-              <p className="text-[10px] text-muted-foreground/50 mt-1.5 px-2">Manager agent routes to Room, Dining, Spa, and Activity specialists</p>
+              )}
+              {isConnected && !isSpeaking && !currentThinking && (
+                <div>
+                  <p className="text-base font-serif font-medium text-foreground">Listening</p>
+                  <p className="text-xs text-muted-foreground mt-1">{formatDuration(callDuration)}</p>
+                </div>
+              )}
+              {isConnected && isSpeaking && (
+                <div>
+                  <p className="text-base font-serif font-medium text-accent-foreground">Concierge is speaking...</p>
+                  <p className="text-xs text-muted-foreground mt-1">{formatDuration(callDuration)}</p>
+                </div>
+              )}
+              {isConnected && currentThinking && !isSpeaking && (
+                <div>
+                  <p className="text-base font-serif font-medium text-foreground">{currentThinking}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{formatDuration(callDuration)}</p>
+                </div>
+              )}
+              {status === 'error' && (
+                <div>
+                  <p className="text-base font-serif font-medium text-destructive">Connection Error</p>
+                  <p className="text-xs text-muted-foreground mt-1">Tap to retry</p>
+                </div>
+              )}
             </div>
-          </aside>
 
-          {/* ============ CHAT AREA ============ */}
-          <main className="flex-1 flex flex-col min-w-0">
-            {/* Messages */}
-            <ScrollArea className="flex-1">
-              <div className="max-w-3xl mx-auto w-full px-4 py-4">
-                {!hasMessages ? (
-                  /* ============ EMPTY STATE ============ */
-                  <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-                    <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-6">
-                      <HiChatBubbleLeftRight className="h-8 w-8 text-primary" />
-                    </div>
-                    <h2 className="text-2xl font-serif font-semibold tracking-wide text-foreground mb-2">Welcome to HotelConcierge AI</h2>
-                    <p className="text-sm text-muted-foreground max-w-md mb-8">Your personal hotel concierge is ready to assist with room bookings, dining reservations, spa appointments, and more. How may I help you today?</p>
-                    <div className="flex flex-wrap justify-center gap-2 max-w-lg">
-                      {INITIAL_SUGGESTIONS.map((suggestion) => {
-                        const IconComp = suggestion.icon
-                        return (
-                          <Button
-                            key={suggestion.label}
-                            variant="outline"
-                            size="sm"
-                            className="rounded-full border-border/60 hover:bg-primary/10 hover:border-primary/40 transition-all duration-200 gap-1.5 text-sm font-medium"
-                            onClick={() => sendMessage(suggestion.message)}
-                            disabled={isLoading}
-                          >
-                            <IconComp className="h-4 w-4" />
-                            {suggestion.label}
-                          </Button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  /* ============ MESSAGE LIST ============ */
-                  <div className="space-y-4 pb-4">
-                    {messages.map((msg) => (
-                      <div key={msg.id}>
-                        {msg.role === 'user' ? (
-                          /* User message */
-                          <div className="flex justify-end px-2">
-                            <div className="max-w-[75%]">
-                              <div className="bg-primary text-primary-foreground rounded-2xl rounded-br-sm px-4 py-2.5 shadow-sm">
-                                <p className="text-sm leading-relaxed">{msg.content}</p>
-                              </div>
-                              <p className="text-[10px] text-muted-foreground/60 text-right mt-1 mr-1">{formatTime(msg.timestamp)}</p>
-                            </div>
-                          </div>
-                        ) : (
-                          /* Agent message */
-                          <div className="flex items-start gap-3 px-2">
-                            <Avatar className="h-8 w-8 flex-shrink-0 border border-border/40 mt-0.5">
-                              <AvatarFallback className="bg-primary text-primary-foreground text-xs font-serif">HC</AvatarFallback>
-                            </Avatar>
-                            <div className="max-w-[75%] min-w-0">
-                              <div className="bg-card text-card-foreground rounded-2xl rounded-bl-sm px-4 py-2.5 shadow-sm border border-border/20">
-                                {renderMarkdown(msg.content)}
-                              </div>
-                              {msg.bookingDetails && (
-                                <BookingCard booking={msg.bookingDetails} onCopy={handleCopy} />
-                              )}
-                              <p className="text-[10px] text-muted-foreground/60 mt-1 ml-1">{formatTime(msg.timestamp)}</p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-
-                    {/* Typing Indicator */}
-                    {isLoading && <TypingIndicator />}
-
-                    <div ref={messagesEndRef} />
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-
-            {/* ============ SUGGESTION CHIPS (above input) ============ */}
-            {hasMessages && (
-              <div className="max-w-3xl mx-auto w-full px-4 pb-1">
-                <div className="flex flex-wrap gap-1.5">
-                  {suggestionsToShow.map((suggestion) => {
-                    const IconComp = 'icon' in suggestion ? (suggestion as typeof INITIAL_SUGGESTIONS[0]).icon : null
-                    return (
-                      <Button
-                        key={suggestion.label}
-                        variant="outline"
-                        size="sm"
-                        className="rounded-full border-border/40 hover:bg-primary/10 hover:border-primary/40 transition-all duration-200 text-xs h-7 px-3"
-                        onClick={() => sendMessage(suggestion.message)}
-                        disabled={isLoading}
-                      >
-                        {IconComp && <IconComp className="h-3 w-3 mr-1" />}
-                        {suggestion.label}
-                      </Button>
-                    )
-                  })}
-                </div>
+            {/* Call controls (mute / end call) -- only when connected */}
+            {isConnected && (
+              <div className="flex items-center gap-4 mt-4">
+                <button
+                  onClick={toggleMute}
+                  className={cn(
+                    'h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-md',
+                    isMuted
+                      ? 'bg-destructive/20 text-destructive border border-destructive/30'
+                      : 'bg-card text-foreground border border-border/40 hover:bg-secondary'
+                  )}
+                  aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+                >
+                  {isMuted ? (
+                    <MdMicOff className="h-5 w-5" />
+                  ) : (
+                    <MdMic className="h-5 w-5" />
+                  )}
+                </button>
+                <button
+                  onClick={endSession}
+                  className="h-12 w-12 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow-md hover:bg-destructive/90 transition-all duration-200"
+                  aria-label="End call"
+                >
+                  <MdCallEnd className="h-5 w-5" />
+                </button>
               </div>
             )}
+          </div>
 
-            {/* ============ INPUT BAR ============ */}
-            <div className="border-t border-border/20 bg-card/40 backdrop-blur-sm flex-shrink-0">
-              <div className="max-w-3xl mx-auto w-full px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <Input
-                    ref={inputRef}
-                    type="text"
-                    placeholder="Type your booking request..."
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    disabled={isLoading}
-                    className="flex-1 rounded-full bg-background border-border/40 focus-visible:ring-primary/30 text-sm px-4 py-2.5 h-10"
-                  />
-                  <Button
-                    size="icon"
-                    className="rounded-full h-10 w-10 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200"
-                    onClick={() => sendMessage(inputValue)}
-                    disabled={isLoading || !inputValue.trim()}
-                    aria-label="Send message"
+          {/* ============ ERROR DISPLAY ============ */}
+          {error && (
+            <div className="mx-4 md:mx-auto md:max-w-lg mb-3">
+              <Card className="border-destructive/30 bg-destructive/5">
+                <CardContent className="py-3 px-4 flex items-center justify-between">
+                  <p className="text-sm text-destructive">{error}</p>
+                  <button
+                    onClick={() => setError(null)}
+                    className="text-destructive/60 hover:text-destructive ml-3 flex-shrink-0 text-xs underline"
                   >
-                    {isLoading ? (
-                      <BsThreeDots className="h-4 w-4 animate-pulse" />
-                    ) : (
-                      <MdSend className="h-4 w-4" />
-                    )}
-                  </Button>
+                    Dismiss
+                  </button>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* ============ TRANSCRIPT PANEL ============ */}
+          <div className="flex-1 min-h-0 flex flex-col mx-4 md:mx-auto md:max-w-2xl w-full md:w-auto mb-4">
+            <div className="flex items-center gap-2 mb-2 px-1">
+              <div className="h-px flex-1 bg-border/30" />
+              <span className="text-xs text-muted-foreground font-medium tracking-wider uppercase">Live Transcript</span>
+              <div className="h-px flex-1 bg-border/30" />
+            </div>
+
+            <Card className="flex-1 min-h-0 bg-card/40 border-border/20 shadow-sm overflow-hidden">
+              <ScrollArea className="h-full max-h-[40vh] md:max-h-[45vh]">
+                <div className="p-4 space-y-3">
+                  {!hasTranscript && !isConnected && (
+                    <div className="flex flex-col items-center justify-center py-8 text-center">
+                      <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center mb-3">
+                        <BsSoundwave className="h-6 w-6 text-primary/50" />
+                      </div>
+                      <p className="text-sm text-muted-foreground">Your conversation transcript will appear here</p>
+                      <p className="text-xs text-muted-foreground/60 mt-1">Start a voice call to begin</p>
+                    </div>
+                  )}
+                  {!hasTranscript && isConnected && (
+                    <div className="flex flex-col items-center justify-center py-6 text-center">
+                      <p className="text-sm text-muted-foreground">Connected -- start speaking to your concierge</p>
+                    </div>
+                  )}
+                  {transcript.map((entry, idx) => (
+                    <TranscriptBubble key={`${idx}-${entry.role}`} role={entry.role} text={entry.text} />
+                  ))}
+                  {currentThinking && isConnected && (
+                    <div className="flex justify-start">
+                      <div className="bg-card border border-border/30 rounded-2xl rounded-bl-sm px-4 py-2.5 shadow-sm">
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+                          <span className="text-xs text-muted-foreground ml-1">{currentThinking}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={transcriptEndRef} />
                 </div>
-                {copiedId && (
-                  <p className="text-xs text-muted-foreground mt-1.5 text-center">Reference ID copied to clipboard</p>
-                )}
+              </ScrollArea>
+            </Card>
+          </div>
+
+          {/* ============ SUGGESTION CHIPS (subtle, voice-only hints) ============ */}
+          <div className="flex-shrink-0 pb-4 px-4 md:px-0">
+            <div className="max-w-2xl mx-auto text-center">
+              <p className="text-xs text-muted-foreground/60 mb-2">Try saying:</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {SUGGESTIONS.map((suggestion) => (
+                  <Badge
+                    key={suggestion}
+                    variant="outline"
+                    className="text-xs font-normal text-muted-foreground/70 border-border/30 bg-transparent cursor-default"
+                  >
+                    {suggestion}
+                  </Badge>
+                ))}
               </div>
             </div>
-          </main>
+          </div>
+
+          {/* ============ AGENT INFO FOOTER ============ */}
+          <div className="flex-shrink-0 border-t border-border/20 bg-card/30 px-4 py-2.5">
+            <div className="max-w-2xl mx-auto flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className={cn('h-2 w-2 rounded-full flex-shrink-0', isConnected ? 'bg-green-500' : 'bg-muted-foreground/40')} />
+                <span className="text-xs text-muted-foreground">Booking Coordinator</span>
+                <span className="text-xs text-muted-foreground/40">|</span>
+                <span className="text-xs text-muted-foreground/60">Voice Agent</span>
+              </div>
+              <span className="text-[10px] text-muted-foreground/50">Routes to Room, Dining, Spa, and Activity specialists</span>
+            </div>
+          </div>
+
         </div>
       </div>
     </ErrorBoundary>

@@ -3,7 +3,15 @@
     "booking_coordinator": {
       "agent_id": "699958767929f75fa2684e49",
       "name": "Booking Coordinator",
-      "type": "manager"
+      "type": "manager",
+      "voice_config": {
+        "provider": "openai",
+        "model": "gpt-4o-mini-realtime-preview",
+        "voice": "alloy",
+        "input_audio_format": "pcm16",
+        "output_audio_format": "pcm16",
+        "temperature": 0.3
+      }
     },
     "room_reservation": {
       "agent_id": "69995864f43190cdde8496ea",
