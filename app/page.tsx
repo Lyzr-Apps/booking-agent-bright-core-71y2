@@ -217,6 +217,8 @@ export default function Page() {
   // Audio playback queue
   const nextPlayTimeRef = useRef<number>(0)
   const playbackContextRef = useRef<AudioContext | null>(null)
+  // Track all active source nodes so we can stop them on clear/interrupt
+  const activeSourceNodesRef = useRef<Set<AudioBufferSourceNode>>(new Set())
 
   // Analyser for visualizer
   const analyserRef = useRef<AnalyserNode | null>(null)
@@ -276,6 +278,24 @@ export default function Page() {
     return rendered.getChannelData(0)
   }, [])
 
+  // Flush all queued/playing audio -- called on clear and interrupt
+  const flushPlaybackQueue = useCallback(() => {
+    // Stop all tracked source nodes immediately
+    activeSourceNodesRef.current.forEach(node => {
+      try { node.stop() } catch { /* already stopped */ }
+      try { node.disconnect() } catch { /* already disconnected */ }
+    })
+    activeSourceNodesRef.current.clear()
+
+    // Close and recreate the playback context to guarantee silence
+    if (playbackContextRef.current && playbackContextRef.current.state !== 'closed') {
+      playbackContextRef.current.close()
+    }
+    playbackContextRef.current = new AudioContext({ sampleRate: sampleRateRef.current })
+    nextPlayTimeRef.current = 0
+    setIsSpeaking(false)
+  }, [])
+
   // Play received audio chunk -- QUEUED sequentially
   const playAudioChunk = useCallback((base64Audio: string) => {
     try {
@@ -302,6 +322,9 @@ export default function Page() {
       sourceNode.buffer = audioBuffer
       sourceNode.connect(ctx.destination)
 
+      // Track this source node
+      activeSourceNodesRef.current.add(sourceNode)
+
       const now = ctx.currentTime
       const startTime = Math.max(now, nextPlayTimeRef.current)
       sourceNode.start(startTime)
@@ -309,7 +332,10 @@ export default function Page() {
 
       setIsSpeaking(true)
       sourceNode.onended = () => {
-        if (ctx.currentTime >= nextPlayTimeRef.current - 0.05) {
+        // Remove from tracking set
+        activeSourceNodesRef.current.delete(sourceNode)
+        // Only set speaking to false if no more queued nodes
+        if (activeSourceNodesRef.current.size === 0) {
           setIsSpeaking(false)
         }
       }
@@ -474,6 +500,10 @@ export default function Page() {
 
             case 'transcript':
               if (msg.role === 'user' && msg.text) {
+                // User is speaking -- flush any remaining agent audio to prevent overlap
+                if (activeSourceNodesRef.current.size > 0) {
+                  flushPlaybackQueue()
+                }
                 setTranscript(prev => {
                   const last = prev[prev.length - 1]
                   if (last && last.role === 'user') {
@@ -497,8 +527,8 @@ export default function Page() {
               break
 
             case 'clear':
-              nextPlayTimeRef.current = 0
-              setIsSpeaking(false)
+              // Stop ALL playing/queued audio immediately to prevent overlap
+              flushPlaybackQueue()
               setCurrentThinking('')
               break
 
@@ -529,10 +559,12 @@ export default function Page() {
       setError(err instanceof Error ? err.message : 'Failed to start session')
       setStatus('error')
     }
-  }, [float32ToPcm16Base64, resample, playAudioChunk, cleanup])
+  }, [float32ToPcm16Base64, resample, playAudioChunk, flushPlaybackQueue, cleanup])
 
   // End session
   const endSession = useCallback(() => {
+    // Stop all playing audio immediately
+    flushPlaybackQueue()
     if (wsRef.current) {
       wsRef.current.close()
       wsRef.current = null
@@ -543,7 +575,7 @@ export default function Page() {
     setIsSpeaking(false)
     setCurrentThinking('')
     setAudioLevel(0)
-  }, [cleanup])
+  }, [cleanup, flushPlaybackQueue])
 
   // Toggle mute
   const toggleMute = useCallback(() => {
@@ -553,6 +585,12 @@ export default function Page() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      // Stop all audio immediately
+      activeSourceNodesRef.current.forEach(node => {
+        try { node.stop() } catch { /* */ }
+        try { node.disconnect() } catch { /* */ }
+      })
+      activeSourceNodesRef.current.clear()
       if (wsRef.current) {
         wsRef.current.close()
         wsRef.current = null
