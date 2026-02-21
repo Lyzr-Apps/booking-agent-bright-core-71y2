@@ -256,26 +256,25 @@ export default function Page() {
     return btoa(binary)
   }, [])
 
-  // Resample audio to target sample rate
-  const resample = useCallback(async (
+  // Synchronous linear interpolation resample -- no async, no glitches
+  const resampleLinear = useCallback((
     audioData: Float32Array,
     fromSampleRate: number,
     toSampleRate: number
-  ): Promise<Float32Array> => {
+  ): Float32Array => {
     if (fromSampleRate === toSampleRate) return audioData
-    const offlineCtx = new OfflineAudioContext(
-      1,
-      Math.ceil((audioData.length * toSampleRate) / fromSampleRate),
-      toSampleRate
-    )
-    const buffer = offlineCtx.createBuffer(1, audioData.length, fromSampleRate)
-    buffer.getChannelData(0).set(audioData)
-    const source = offlineCtx.createBufferSource()
-    source.buffer = buffer
-    source.connect(offlineCtx.destination)
-    source.start()
-    const rendered = await offlineCtx.startRendering()
-    return rendered.getChannelData(0)
+    const ratio = fromSampleRate / toSampleRate
+    const newLength = Math.round(audioData.length / ratio)
+    const result = new Float32Array(newLength)
+    for (let i = 0; i < newLength; i++) {
+      const position = i * ratio
+      const index = Math.floor(position)
+      const fraction = position - index
+      const a = audioData[index] || 0
+      const b = audioData[Math.min(index + 1, audioData.length - 1)] || 0
+      result[i] = a + fraction * (b - a)
+    }
+    return result
   }, [])
 
   // Flush all queued/playing audio -- called on clear and interrupt
@@ -452,11 +451,11 @@ export default function Page() {
           source.connect(processor)
           processor.connect(silentGain) // silent -- no echo
 
-          processor.onaudioprocess = async (e) => {
+          processor.onaudioprocess = (e) => {
             if (ws.readyState !== WebSocket.OPEN) return
             if (isMutedRef.current) return
             const inputData = e.inputBuffer.getChannelData(0)
-            const resampled = await resample(
+            const resampled = resampleLinear(
               new Float32Array(inputData),
               audioContext.sampleRate,
               sampleRateRef.current
@@ -559,7 +558,7 @@ export default function Page() {
       setError(err instanceof Error ? err.message : 'Failed to start session')
       setStatus('error')
     }
-  }, [float32ToPcm16Base64, resample, playAudioChunk, flushPlaybackQueue, cleanup])
+  }, [float32ToPcm16Base64, resampleLinear, playAudioChunk, flushPlaybackQueue, cleanup])
 
   // End session
   const endSession = useCallback(() => {
@@ -636,7 +635,7 @@ export default function Page() {
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
 
           {/* ============ VOICE INTERFACE AREA ============ */}
-          <div className="flex flex-col items-center justify-center px-4 pt-6 pb-4 md:pt-10 md:pb-6 flex-shrink-0">
+          <div className="flex flex-col items-center justify-center px-4 pt-4 pb-3 md:pt-6 md:pb-4 flex-shrink-0">
 
             {/* Central Voice Button */}
             <div className="relative flex items-center justify-center">
@@ -700,7 +699,7 @@ export default function Page() {
             </div>
 
             {/* Status text below button */}
-            <div className="mt-5 text-center min-h-[3rem]">
+            <div className="mt-3 text-center min-h-[2.5rem]">
               {isIdle && (
                 <div>
                   <p className="text-base font-serif font-medium text-foreground">Tap to Connect</p>
@@ -795,7 +794,7 @@ export default function Page() {
             </div>
 
             <Card className="flex-1 min-h-0 bg-card/40 border-border/20 shadow-sm overflow-hidden">
-              <ScrollArea className="h-full max-h-[40vh] md:max-h-[45vh]">
+              <ScrollArea className="h-full max-h-[55vh] md:max-h-[60vh]">
                 <div className="p-4 space-y-3">
                   {!hasTranscript && !isConnected && (
                     <div className="flex flex-col items-center justify-center py-8 text-center">
