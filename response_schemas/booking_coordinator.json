@@ -1,0 +1,20 @@
+{
+  "agent_name": "Booking Coordinator",
+  "agent_id": "699958767929f75fa2684e49",
+  "description": "Receives all guest messages, determines booking intent, routes to the appropriate specialist sub-agent, and delivers the final formatted confirmation to the guest.",
+  "agent_type": "text",
+  "accessor": "text",
+  "has_module_outputs": false,
+  "is_manager": true,
+  "managed_agents": ["69995864f43190cdde8496ea", "699958647929f75fa2684e41", "69995864711ecaca449d061a"],
+  "response_schema": {
+    "response": "string - The agent's response message to the guest",
+    "booking_details": {
+      "reference_id": "string",
+      "booking_type": "string",
+      "status": "string",
+      "details": "string"
+    }
+  },
+  "sample_accessor": "result.response.message || result.response"
+}

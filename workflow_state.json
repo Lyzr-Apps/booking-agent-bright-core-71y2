@@ -1,0 +1,25 @@
+{
+  "agents": {
+    "booking_coordinator": {
+      "agent_id": "699958767929f75fa2684e49",
+      "name": "Booking Coordinator",
+      "type": "manager"
+    },
+    "room_reservation": {
+      "agent_id": "69995864f43190cdde8496ea",
+      "name": "Room Reservation Agent",
+      "type": "sub-agent"
+    },
+    "dining_spa": {
+      "agent_id": "699958647929f75fa2684e41",
+      "name": "Dining & Spa Booking Agent",
+      "type": "sub-agent"
+    },
+    "conference_concierge": {
+      "agent_id": "69995864711ecaca449d061a",
+      "name": "Conference & Concierge Agent",
+      "type": "sub-agent"
+    }
+  },
+  "manager_agent_id": "699958767929f75fa2684e49"
+}

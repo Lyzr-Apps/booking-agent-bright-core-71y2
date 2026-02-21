@@ -1,0 +1,20 @@
+{
+  "agent_name": "Dining & Spa Booking Agent",
+  "agent_id": "699958647929f75fa2684e41",
+  "description": "Handles restaurant table reservations and spa/wellness appointment bookings - collects date, time, party size or treatment type, dietary requirements or wellness preferences, and guest details.",
+  "agent_type": "text",
+  "accessor": "text",
+  "has_module_outputs": false,
+  "is_manager": false,
+  "managed_agents": [],
+  "response_schema": {
+    "response": "string - The agent's response message to the guest",
+    "booking_details": {
+      "reference_id": "string",
+      "booking_type": "string",
+      "status": "string",
+      "details": "string"
+    }
+  },
+  "sample_accessor": "result.response.message || result.response"
+}

@@ -1,0 +1,41 @@
+{
+  "nodes": [
+    {"id": "input_node", "type": "Input", "label": "Guest Message", "nodeCategory": "input"},
+    {"id": "booking_coordinator", "type": "Agent", "label": "Booking Coordinator", "nodeCategory": "agent"},
+    {"id": "room_reservation", "type": "Agent", "label": "Room Reservation Agent", "nodeCategory": "agent"},
+    {"id": "dining_spa", "type": "Agent", "label": "Dining & Spa Booking Agent", "nodeCategory": "agent"},
+    {"id": "conference_concierge", "type": "Agent", "label": "Conference & Concierge Agent", "nodeCategory": "agent"},
+    {"id": "output_node", "type": "Output", "label": "Guest Response", "nodeCategory": "end"}
+  ],
+  "edges": [
+    {"source": "input_node", "target": "booking_coordinator"},
+    {"source": "booking_coordinator", "target": "room_reservation"},
+    {"source": "booking_coordinator", "target": "dining_spa"},
+    {"source": "booking_coordinator", "target": "conference_concierge"},
+    {"source": "room_reservation", "target": "output_node"},
+    {"source": "dining_spa", "target": "output_node"},
+    {"source": "conference_concierge", "target": "output_node"}
+  ],
+  "agents": {
+    "booking_coordinator": {
+      "id": "699958767929f75fa2684e49",
+      "name": "Booking Coordinator",
+      "type": "manager"
+    },
+    "room_reservation": {
+      "id": "69995864f43190cdde8496ea",
+      "name": "Room Reservation Agent",
+      "type": "sub-agent"
+    },
+    "dining_spa": {
+      "id": "699958647929f75fa2684e41",
+      "name": "Dining & Spa Booking Agent",
+      "type": "sub-agent"
+    },
+    "conference_concierge": {
+      "id": "69995864711ecaca449d061a",
+      "name": "Conference & Concierge Agent",
+      "type": "sub-agent"
+    }
+  }
+}

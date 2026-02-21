@@ -1,0 +1,26 @@
+{
+  "agent_name": "Booking Coordinator",
+  "agent_id": "699958767929f75fa2684e49",
+  "description": "Receives all guest messages, determines booking intent (room, dining, spa, conference, concierge, or modification), routes to the appropriate specialist sub-agent, and delivers the final formatted confirmation to the guest.",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "response": "string",
+    "booking_details": {
+      "reference_id": "string",
+      "booking_type": "string",
+      "status": "string",
+      "details": "string"
+    }
+  },
+  "example_response": {
+    "response": "The agent's response message to the guest",
+    "booking_details": {
+      "reference_id": "Booking reference number",
+      "booking_type": "Type of booking",
+      "status": "Booking status",
+      "details": "Additional booking details"
+    }
+  }
+}

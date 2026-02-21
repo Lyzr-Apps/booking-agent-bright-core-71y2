@@ -1,0 +1,20 @@
+{
+  "agent_name": "Conference & Concierge Agent",
+  "agent_id": "69995864711ecaca449d061a",
+  "description": "Handles conference/event room bookings and concierge service requests - collects event date, duration, room setup preferences, AV requirements, or concierge service type (tours, transport, special arrangements).",
+  "agent_type": "text",
+  "accessor": "text",
+  "has_module_outputs": false,
+  "is_manager": false,
+  "managed_agents": [],
+  "response_schema": {
+    "response": "string - The agent's response message to the guest",
+    "booking_details": {
+      "reference_id": "string",
+      "booking_type": "string",
+      "status": "string",
+      "details": "string"
+    }
+  },
+  "sample_accessor": "result.response.message || result.response"
+}

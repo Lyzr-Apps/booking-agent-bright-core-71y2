@@ -1,0 +1,20 @@
+{
+  "agent_name": "Room Reservation Agent",
+  "agent_id": "69995864f43190cdde8496ea",
+  "description": "Handles room bookings - collects check-in/check-out dates, room type preference, number of guests, special requests, and guest contact details.",
+  "agent_type": "text",
+  "accessor": "text",
+  "has_module_outputs": false,
+  "is_manager": false,
+  "managed_agents": [],
+  "response_schema": {
+    "response": "string - The agent's response message to the guest",
+    "booking_details": {
+      "reference_id": "string",
+      "booking_type": "string",
+      "status": "string",
+      "details": "string"
+    }
+  },
+  "sample_accessor": "result.response.message || result.response"
+}
